@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # The service is named "mongodb"
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - mongo-net
+
+  # The UI service
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    restart: always
+    depends_on:
+      - mongodb
+    ports:
+      - "8081:8081"
+    environment:
+      # --- THIS IS THE FIX ---
+      # This value MUST match the service name above.
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      # -----------------------
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_CONFIG_BASICAUTH_USERNAME}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_CONFIG_BASICAUTH_PASSWORD}
+    networks:
+      - mongo-net
+
+networks:
+  mongo-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
+    driver: local

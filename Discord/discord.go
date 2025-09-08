@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
+	"hellish/AI"
+	"hellish/Database"
 	"log"
 	"os"
 	"strings"
-	"time"
 )
 
 var prefix = "!"
@@ -26,8 +27,12 @@ func Dc() {
 	if err != nil {
 		panic(err)
 	}
+	sess.AddHandler(handleChat)
 	sess.AddHandler(helpCommand)
 	sess.AddHandler(handleButtonInteraction)
+	sess.AddHandler(activeCommand)
+	sess.AddHandler(handleSystemMessage)
+	sess.AddHandler(handleAPI)
 	sess.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsMessageContent
 	err = sess.Open()
 	if err != nil {
@@ -40,89 +45,63 @@ func Dc() {
 	select {}
 }
 
+// helpCommand updated to show only implemented commands.
 func helpCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.Author.ID == s.State.User.ID {
+	if m.Author.ID == s.State.User.ID || m.Content != prefix+"help" {
 		return
 	}
 
-	if !strings.HasPrefix(m.Content, prefix) {
-		return
-	}
-
-	// Only respond to !help command
-	if m.Content != "!help" {
-		return
-	}
-
-	// Get bot user info from session state
 	var botAvatarURL string
 	if s.State.User != nil {
 		botAvatarURL = s.State.User.AvatarURL("")
 	}
 
 	embed := &discordgo.MessageEmbed{
-		Title:       "🤖 AI Assistant Control Panel",
-		Description: "**Welcome to the Professional AI Management System**\n\nSelect a category below to view detailed information about available commands and features.",
+		Title:       "Help Command",
+		Description: "**Hellish Queen**\n\nSelect a category below to view the commands you can use to configure and interact with me.",
 		Color:       0x5865F2, // Discord's blurple color
 		Thumbnail: &discordgo.MessageEmbedThumbnail{
 			URL: botAvatarURL,
 		},
+		Image: &discordgo.MessageEmbedImage{
+			URL: "https://media.discordapp.net/attachments/1360608003010728219/1413557061144547510/hellish-ezgif.com-optimize.gif?ex=68bc5d19&is=68bb0b99&hm=2cd2bec26267d3b4fd0e7f5a334a1be3412c2472567b387f6cd5af623e018b95&=",
+		},
 		Fields: []*discordgo.MessageEmbedField{
 			{
-				Name: "📋 Available Categories",
-				Value: "🔧 **Channel Management** - Activate/Deactivate AI\n" +
-					"💾 **Data Management** - Memory and history controls\n" +
-					"⚙️ **Configuration** - Settings and preferences\n" +
-					"📊 **Status & Info** - System information and statistics\n" +
-					"❓ **Support** - Help and troubleshooting",
+				Name:   "📋 Available Categories",
+				Value:  "🔧 **Channel Management**\n⚙️ **Configuration**",
 				Inline: false,
 			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
-			Text:    fmt.Sprintf("AI Control Panel • Requested by %s • %s", m.Author.Username, time.Now().Format("Jan 02, 2006")),
+			Text:    fmt.Sprintf("AI Control Panel • Requested by %s", m.Author.Username),
 			IconURL: m.Author.AvatarURL(""),
 		},
 	}
 
-	// Create interactive buttons
+	// Define the dropdown menu options for implemented commands
+	options := []discordgo.SelectMenuOption{
+		{
+			Label:       "Channel Management",
+			Value:       "help_channel_mgmt",
+			Description: "Commands to control where the AI is active.",
+		},
+		{
+			Label:       "Configuration",
+			Value:       "help_config",
+			Description: "Commands to configure AI behavior and API keys.",
+		},
+	}
+
+	selectMenu := discordgo.SelectMenu{
+		CustomID:    "category_select",
+		Placeholder: "View commands by their category",
+		Options:     options,
+	}
+
 	components := []discordgo.MessageComponent{
 		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					CustomID: "help_channel_mgmt",
-					Label:    "🔧 Channel Management",
-					Style:    discordgo.PrimaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_data_mgmt",
-					Label:    "💾 Data Management",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_config",
-					Label:    "⚙️ Configuration",
-					Style:    discordgo.SecondaryButton,
-				},
-			},
-		},
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					CustomID: "help_status",
-					Label:    "📊 Status & Info",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_support",
-					Label:    "❓ Support",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_home",
-					Label:    "🏠 Main Menu",
-					Style:    discordgo.SuccessButton,
-				},
-			},
+			Components: []discordgo.MessageComponent{selectMenu},
 		},
 	}
 
@@ -135,203 +114,413 @@ func helpCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 func handleButtonInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type != discordgo.InteractionMessageComponent {
+
+	switch i.Type {
+
+	case discordgo.InteractionMessageComponent:
+		handleComponentInteraction(s, i)
+
+	case discordgo.InteractionModalSubmit:
+		handleModalSubmit(s, i)
+	}
+}
+
+// handleComponentInteraction updated to handle the new help menu.
+func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.MessageComponentData()
+	customID := data.CustomID
+
+	if customID == "add_api_key_button" {
+		perms, err := s.UserChannelPermissions(i.Member.User.ID, i.ChannelID)
+		if err != nil {
+			log.Printf("Error getting user permissions for %s: %v", i.Member.User.ID, err)
+			return
+		}
+		if perms&discordgo.PermissionManageGuild == 0 {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "You need the `Manage Server` permission to use this button.",
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "api_key_modal",
+				Title:    "Add New API Key",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "api_key_input",
+								Label:       "Gemini API Key",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "Enter your key here. It will not be shown publicly.",
+								Required:    true,
+								MinLength:   39,
+								MaxLength:   40,
+							},
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			log.Printf("Error showing modal: %v", err)
+		}
 		return
 	}
 
-	customID := i.MessageComponentData().CustomID
-
-	var embed *discordgo.MessageEmbed
-	var components []discordgo.MessageComponent
-
-	// Get bot avatar
-	var botAvatarURL string
-	if s.State.User != nil {
-		botAvatarURL = s.State.User.AvatarURL("")
-	}
-
-	switch customID {
-	case "help_channel_mgmt":
-		embed = &discordgo.MessageEmbed{
-			Title:       "🔧 Channel Management Commands",
-			Description: "**Control AI presence in your Discord channels**\n\nManage where and how the AI assistant operates within your server.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "🟢 Activate AI",
-					Value:  "```!activate```\n**Function:** Enables AI responses in the current channel\n**Permission:** Requires Manage Channels permission\n**Usage:** The AI will begin responding to messages and participating in conversations",
-					Inline: false,
-				},
-				{
-					Name:   "🔴 Deactivate AI",
-					Value:  "```!deactivate```\n**Function:** Disables AI responses in the current channel\n**Permission:** Requires Manage Channels permission\n**Usage:** The AI will stop responding but will retain conversation history",
-					Inline: false,
-				},
-			},
-			Footer: &discordgo.MessageEmbedFooter{Text: "Channel Management • Use buttons below to navigate"},
+	if customID == "category_select" {
+		var embed *discordgo.MessageEmbed
+		var botAvatarURL string
+		if s.State.User != nil {
+			botAvatarURL = s.State.User.AvatarURL("")
 		}
 
-	case "help_data_mgmt":
-		embed = &discordgo.MessageEmbed{
-			Title:       "💾 Data Management Commands",
-			Description: "**Manage AI memory and conversation data**\n\nControl how the AI stores and processes conversation history.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "🔄 Reset Memory",
-					Value:  "```!wack```\n**Function:** Clears AI conversation history for this channel\n**Permission:** Requires Manage Messages permission\n**Usage:** Provides a fresh start - AI won't remember previous conversations\n**Warning:** This action cannot be undone",
-					Inline: false,
+		selectedValue := data.Values[0]
+		switch selectedValue {
+		case "help_channel_mgmt":
+			embed = &discordgo.MessageEmbed{
+				Title:       "🔧 Channel Management Commands",
+				Description: "Control where I am active on this server.",
+				Color:       0x5865F2,
+				Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
+				Fields: []*discordgo.MessageEmbedField{
+					{
+						Name:  "🟢 `!activate`",
+						Value: "**Function:** Enables me to respond to messages in the current channel.\n**Permission:** `Manage Server`",
+					},
 				},
-				{
-					Name:   "📈 Memory Status",
-					Value:  "```!memory```\n**Function:** Shows current memory usage and conversation count\n**Permission:** Available to all users\n**Usage:** Displays how much data the AI has stored for this channel",
-					Inline: false,
+			}
+		case "help_config":
+			embed = &discordgo.MessageEmbed{
+				Title:       "⚙️ Configuration Commands",
+				Description: "Customize my behavior and manage API keys.",
+				Color:       0x5865F2,
+				Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
+				Fields: []*discordgo.MessageEmbedField{
+					{
+						Name:  "🔑 `!api <add|view|remove|clear>`",
+						Value: "**Function:** Manages the Gemini API keys I use for this server.\n• `add`: Opens a secure pop-up to add a key.\n• `view`: Shows a count of registered keys.\n• `remove <key>`: Removes a specific key.\n• `clear`: Removes all keys.\n**Permission:** `Manage Server` for modifying commands.",
+					},
+					{
+						Name:  "📝 `!system <set|view|clear>`",
+						Value: "**Function:** Manages the custom instructions I use for this server.\n• `set <message>`: Sets the system message.\n• `view`: Shows the current message.\n• `clear`: Clears the message.\n**Permission:** `Manage Server` for modifying commands.",
+					},
 				},
-			},
-			Footer: &discordgo.MessageEmbedFooter{Text: "Data Management • Use buttons below to navigate"},
+			}
 		}
 
-	case "help_config":
-		embed = &discordgo.MessageEmbed{
-			Title:       "⚙️ Configuration Commands",
-			Description: "**Customize AI behavior and settings**\n\nAdjust how the AI responds and behaves in your server.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "🎯 Response Mode",
-					Value:  "```!mode [casual|professional|creative]```\n**Function:** Sets AI personality and response style\n**Options:** casual, professional, creative\n**Default:** professional",
-					Inline: false,
-				},
-				{
-					Name:   "⏱️ Response Delay",
-					Value:  "```!delay [0-30]```\n**Function:** Sets delay in seconds before AI responds\n**Range:** 0-30 seconds\n**Default:** 2 seconds",
-					Inline: false,
-				},
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Embeds:     []*discordgo.MessageEmbed{embed},
+				Components: i.Message.Components,
 			},
-			Footer: &discordgo.MessageEmbedFooter{Text: "Configuration • Use buttons below to navigate"},
-		}
-
-	case "help_status":
-		embed = &discordgo.MessageEmbed{
-			Title:       "📊 Status & Information Commands",
-			Description: "**Monitor AI performance and system status**\n\nGet detailed information about the AI assistant's current state.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "🔍 System Status",
-					Value:  "```!status```\n**Function:** Shows AI system health and performance metrics\n**Information:** Uptime, memory usage, response times\n**Refresh:** Updates every 30 seconds",
-					Inline: false,
-				},
-				{
-					Name:   "📋 Channel Info",
-					Value:  "```!info```\n**Function:** Displays AI configuration for current channel\n**Shows:** Active status, memory usage, settings, last activity\n**Access:** Available to all users",
-					Inline: false,
-				},
-			},
-			Footer: &discordgo.MessageEmbedFooter{Text: "Status & Information • Use buttons below to navigate"},
-		}
-
-	case "help_support":
-		embed = &discordgo.MessageEmbed{
-			Title:       "❓ Support & Troubleshooting",
-			Description: "**Get help and resolve issues**\n\nFind solutions to common problems and get additional support.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "🆘 Emergency Commands",
-					Value:  "```!emergency stop``` - Immediately halt AI in all channels\n```!emergency reset``` - Full system reset (admin only)\n```!emergency logs``` - Generate diagnostic report",
-					Inline: false,
-				},
-				{
-					Name:   "📞 Contact Support",
-					Value:  "• **Server Admin:** Contact your Discord server administrator\n• **Technical Issues:** Use `!report [issue]` command\n• **Feature Requests:** Use `!suggest [idea]` command",
-					Inline: false,
-				},
-			},
-			Footer: &discordgo.MessageEmbedFooter{Text: "Support & Troubleshooting • Use buttons below to navigate"},
-		}
-
-	default: // help_home or fallback
-		embed = &discordgo.MessageEmbed{
-			Title:       "🤖 AI Assistant Control Panel",
-			Description: "**Welcome to the Professional AI Management System**\n\nSelect a category below to view detailed information about available commands and features.",
-			Color:       0x5865F2,
-			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: botAvatarURL},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name: "📋 Available Categories",
-					Value: "🔧 **Channel Management** - Activate/Deactivate AI\n" +
-						"💾 **Data Management** - Memory and history controls\n" +
-						"⚙️ **Configuration** - Settings and preferences\n" +
-						"📊 **Status & Info** - System information and statistics\n" +
-						"❓ **Support** - Help and troubleshooting",
-					Inline: false,
-				},
-			},
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: fmt.Sprintf("AI Control Panel • Requested by %s • %s",
-					i.Member.User.Username, time.Now().Format("Jan 02, 2006")),
-				IconURL: i.Member.User.AvatarURL(""),
-			},
+		})
+		if err != nil {
+			log.Printf("Error responding to help menu interaction: %v", err)
 		}
 	}
+}
 
-	// Navigation buttons (same for all pages)
-	components = []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					CustomID: "help_channel_mgmt",
-					Label:    "🔧 Channel Management",
-					Style:    discordgo.PrimaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_data_mgmt",
-					Label:    "💾 Data Management",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_config",
-					Label:    "⚙️ Configuration",
-					Style:    discordgo.SecondaryButton,
-				},
-			},
-		},
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					CustomID: "help_status",
-					Label:    "📊 Status & Info",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_support",
-					Label:    "❓ Support",
-					Style:    discordgo.SecondaryButton,
-				},
-				discordgo.Button{
-					CustomID: "help_home",
-					Label:    "🏠 Main Menu",
-					Style:    discordgo.SuccessButton,
-				},
-			},
-		},
+func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.ModalSubmitData()
+
+	// Ensure we're handling the correct modal
+	if data.CustomID != "api_key_modal" {
+		return
 	}
 
-	// Update the message
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
+	apiKey := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+
+	err := Database.AddAPIKey(i.GuildID, apiKey)
+	if err != nil {
+		log.Printf("Error adding API key via modal for guild %s: %v", i.GuildID, err)
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "❌ An error occurred while saving the API key. It might already be in the list, or the database is unavailable.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: components,
+			Content: "✅ API key has been added successfully and securely.",
+			Flags:   discordgo.MessageFlagsEphemeral,
 		},
 	})
 	if err != nil {
-		log.Printf("Error responding to interaction: %v", err)
+		log.Printf("Error sending modal confirmation: %v", err)
+	}
+}
+
+func activeCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+	if !strings.HasPrefix(m.Content, prefix) {
+		return
+	}
+	if m.Content != "!activate" {
+		return
+	}
+	channelID, err := Database.FindChannel(m.GuildID)
+	if err != nil {
+		log.Println(err)
+	}
+	if channelID == "" || channelID != m.ChannelID {
+		err := Database.InsertChannel(m.GuildID, m.ChannelID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		_, err = s.ChannelMessageSend(m.ChannelID, "AI is now active in this channel")
+		if err != nil {
+			return
+		}
+	} else {
+		_, err = s.ChannelMessageSend(m.ChannelID, "AI is already active in this channel")
+		if err != nil {
+			return
+		}
+	}
+}
+
+func handleChat(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+	if strings.HasPrefix(m.Content, prefix) {
+		return
+	}
+
+	channelId, err := Database.FindChannel(m.GuildID)
+	if err != nil {
+		return
+	}
+	if channelId != m.ChannelID {
+		return
+	}
+	systemMessage, err := Database.ViewSystemMessage(m.GuildID)
+	if err != nil {
+		return
+	}
+	input :=
+		`
+		UserInput :
+		` + m.Content +
+			`
+		SystemMessage :
+		` + systemMessage + `
+			user name : ` + m.Author.Username + `
+		`
+	res, err := AI.Response(m.GuildID, AI.GetBasePersona(), input)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error: %v", err))
+	}
+	_, err = s.ChannelMessageSend(m.ChannelID, res)
+	if err != nil {
+		return
+	}
+}
+
+func handleSystemMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+
+	// We only care about messages starting with "!system"
+	if !strings.HasPrefix(m.Content, prefix+"system") {
+		return
+	}
+
+	parts := strings.Fields(m.Content)
+	// The command should be at least `!system <subcommand>`
+	if len(parts) < 2 {
+		// Send usage info if just `!system` is typed
+		s.ChannelMessageSend(m.ChannelID, "Usage: `!system <set|view|clear> [message]`")
+		return
+	}
+
+	subcommand := parts[1]
+
+	switch subcommand {
+	case "set":
+		// Check for 'Manage Server' permission
+		perms, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
+		if err != nil {
+			log.Printf("Error getting user permissions for %s: %v", m.Author.ID, err)
+			s.ChannelMessageSend(m.ChannelID, "Could not verify your permissions. Please try again.")
+			return
+		}
+		if perms&discordgo.PermissionManageGuild == 0 {
+			s.ChannelMessageSend(m.ChannelID, "You need the `Manage Server` permission to set the system message.")
+			return
+		}
+
+		if len(parts) < 3 {
+			s.ChannelMessageSend(m.ChannelID, "Please provide a message to set. Usage: `!system set <your system message>`")
+			return
+		}
+
+		message := strings.Join(parts[2:], " ")
+		err = Database.InsertSystemMessage(m.GuildID, message)
+		if err != nil {
+			log.Printf("Error setting system message for guild %s: %v", m.GuildID, err)
+			s.ChannelMessageSend(m.ChannelID, "An error occurred while updating the system message.")
+			return
+		}
+		s.ChannelMessageSend(m.ChannelID, "✅ System message has been updated successfully.")
+
+	case "view":
+		message, err := Database.ViewSystemMessage(m.GuildID)
+		if err != nil {
+			log.Printf("Error viewing system message for guild %s: %v", m.GuildID, err)
+			s.ChannelMessageSend(m.ChannelID, "An error occurred while retrieving the system message.")
+			return
+		}
+
+		displayMessage := "No system message is currently set."
+		if message != "" {
+			displayMessage = message
+		}
+		s.ChannelMessageSend(m.ChannelID, displayMessage)
+	}
+}
+func handleAPI(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+
+	// We only care about messages starting with "!api"
+	if !strings.HasPrefix(m.Content, prefix+"api") {
+		return
+	}
+
+	parts := strings.Fields(m.Content)
+	// The command should be at least `!api <subcommand>`
+	if len(parts) < 2 {
+		s.ChannelMessageSend(m.ChannelID, "Usage: `!api <add|view|remove|clear> [key]`")
+		return
+	}
+
+	subcommand := parts[1]
+
+	// Check for 'Manage Server' permission for any command that modifies data
+	isModifyingCommand := subcommand == "add" || subcommand == "remove" || subcommand == "clear"
+	if isModifyingCommand {
+		perms, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
+		if err != nil {
+			log.Printf("Error getting user permissions for %s: %v", m.Author.ID, err)
+			s.ChannelMessageSend(m.ChannelID, "Could not verify your permissions. Please try again.")
+			return
+		}
+		if perms&discordgo.PermissionManageGuild == 0 {
+			s.ChannelMessageSend(m.ChannelID, "You need the `Manage Server` permission to modify API keys.")
+			return
+		}
+	}
+
+	switch subcommand {
+	case "add":
+		// The permission check is already handled above.
+		// Now, we send a message with a button to trigger the modal.
+		_, err := s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+			Content: "Click the button below to add a new API key securely via a pop-up form.",
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label:    "Add API Key",
+							Style:    discordgo.PrimaryButton,
+							CustomID: "add_api_key_button", // A unique ID for our button
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			log.Printf("Error sending API key button: %v", err)
+		}
+		// The rest of the logic is now handled by the interaction handler below.
+		return
+
+	case "view":
+		// Note: This relies on the new ViewAPIKeys function suggested below.
+		keys, err := Database.ViewAPIKeys(m.GuildID)
+		if err != nil {
+			log.Printf("Error viewing API keys for guild %s: %v", m.GuildID, err)
+			s.ChannelMessageSend(m.ChannelID, "An error occurred while retrieving API keys.")
+			return
+		}
+
+		var keyList strings.Builder
+		if len(keys) == 0 {
+			keyList.WriteString("No API keys are currently set for this server.")
+		} else {
+			for i, key := range keys {
+				// Mask the key for security, showing only the first and last 4 characters
+				maskedKey := key
+				if len(key) > 8 {
+					maskedKey = fmt.Sprintf("%s...%s", key[:4], key[len(key)-4:])
+				}
+				keyList.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, maskedKey))
+			}
+		}
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "🔑 Registered API Keys",
+			Description: "These keys are used by the AI for generating responses.",
+			Color:       0x5865F2, // Discord Blurple
+			Fields: []*discordgo.MessageEmbedField{
+				{
+					Name:  "Keys on this Server",
+					Value: keyList.String(),
+				},
+			},
+			Footer: &discordgo.MessageEmbedFooter{
+				Text:    fmt.Sprintf("Requested by %s", m.Author.Username),
+				IconURL: m.Author.AvatarURL(""),
+			},
+		}
+		s.ChannelMessageSendEmbed(m.ChannelID, embed)
+
+	case "remove":
+		if len(parts) < 3 {
+			s.ChannelMessageSend(m.ChannelID, "Please provide the full API key to remove. Usage: `!api remove <api_key_to_remove>`")
+			return
+		}
+		apiKeyToRemove := parts[2]
+		// Note: This relies on the new RemoveAPIKey function suggested below.
+		err := Database.RemoveAPIKey(m.GuildID, apiKeyToRemove)
+		if err != nil {
+			log.Printf("Error removing API key for guild %s: %v", m.GuildID, err)
+			s.ChannelMessageSend(m.ChannelID, "An error occurred. Make sure you provided the exact key to remove.")
+			return
+		}
+		s.ChannelMessageSend(m.ChannelID, "✅ API key has been removed successfully.")
+
+	case "clear":
+		// Note: This relies on the new ClearAPIKeys function suggested below.
+		err := Database.ClearAPIKeys(m.GuildID)
+		if err != nil {
+			log.Printf("Error clearing API keys for guild %s: %v", m.GuildID, err)
+			s.ChannelMessageSend(m.ChannelID, "An error occurred while clearing API keys.")
+			return
+		}
+		s.ChannelMessageSend(m.ChannelID, "✅ All API keys for this server have been cleared.")
+
+	default:
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unknown subcommand `%s`. Use `!api <add|view|remove|clear>`.", subcommand))
 	}
 }

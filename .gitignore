@@ -1,3 +1,26 @@
+# Environment variables
+# Never commit this file!
 .env
-idea
-tmp
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+hellish-app
+app
+
+# IDE-specific files
+# Use a trailing slash to specify a directory
+.idea/
+.vscode/
+
+# Temporary files
+tmp/
+*.tmp
+*.swp
+
+# OS-specific files
+.DS_Store
+Thumbs.db

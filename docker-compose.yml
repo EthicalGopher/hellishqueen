@@ -1,4 +1,16 @@
 services:
+  app:
+    build: .
+    container_name: hellish-app
+    restart: unless-stopped
+    environment:
+       MONGO_URL: ${MONGO_URL}
+       BOT_TOKEN : ${BOT_TOKEN}
+       ENCRYPTION_KEY : ${ENCRYPTION_KEY}
+    depends_on:
+      - mongo
+    networks:
+      - hellish-network
   mongo:
     image: mongo
     restart: always

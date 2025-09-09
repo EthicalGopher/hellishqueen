@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/joho/godotenv"
 	"io"
 	"os"
 )
@@ -16,7 +15,7 @@ var secretKey []byte
 // Init loads the encryption key from an environment variable.
 // It must be called once at application startup.
 func Init() error {
-	godotenv.Load()
+
 	keyHex := os.Getenv("ENCRYPTION_KEY")
 	if keyHex == "" {
 		return fmt.Errorf("ENCRYPTION_KEY environment variable not set")

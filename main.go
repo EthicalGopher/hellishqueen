@@ -5,9 +5,15 @@ import (
 	"hellish/Discord"
 	"hellish/crypto"
 	"log"
+
+	"github.com/joho/godotenv" // Add this import
 )
 
 func main() {
+
+	if err := godotenv.Load(); err != nil {
+		log.Println("Info: .env file not found, relying on variables from environment.")
+	}
 
 	if err := Database.ConnectDB(); err != nil {
 		log.Fatalf("Fatal error: Failed to connect to the database: %v", err)

@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -30,10 +29,6 @@ var collection *mongo.Collection
 var client *mongo.Client
 
 func ConnectDB() error {
-
-	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: Could not load .env file: %v", err)
-	}
 
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL == "" {

@@ -3,7 +3,6 @@ package Discord
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/joho/godotenv"
 	"hellish/AI"
 	"hellish/Database"
 	"log"
@@ -14,10 +13,7 @@ import (
 var prefix = "!"
 
 func Dc() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+
 	token := os.Getenv("BOT_TOKEN")
 	if token == "" {
 		log.Fatal("BOT_TOKEN not found in environment variables")

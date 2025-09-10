@@ -29,14 +29,11 @@ var collection *mongo.Collection
 var client *mongo.Client
 
 func ConnectDB() error {
-
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL == "" {
 		return fmt.Errorf("MONGO_URL environment variable not set")
 	}
-
-	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
-	clientOptions := options.Client().ApplyURI(mongoURL).SetServerAPIOptions(serverAPI)
+	clientOptions := options.Client().ApplyURI(mongoURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -218,36 +215,28 @@ func ClearAPIKeys(serverId string) error {
 
 func InsertSystemMessage(serverId string, message string) error {
 	if collection == nil {
-		return fmt.Errorf("database not initialized, call ConnectDB first")
+		return fmt.Errorf("database not initialized")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	singleResult := collection.FindOne(ctx, bson.D{{"server_id", serverId}})
 
-	err := singleResult.Err()
-	if err != nil {
-		var user = User{
-			ServerId:        serverId,
-			ActivateChannel: "",
-			ServerData:      "",
-			ApiList: ApiList{
-				Apikeys: []string{},
-			},
-			SystemMessage: "",
-		}
-		result, err := collection.InsertOne(ctx, user)
-		fmt.Println(result)
-		if err != nil {
-			return err
-		}
+	filter := bson.M{"server_id": serverId}
+	// Use $set to update the message, and $setOnInsert to create default fields if the document is new.
+	// This is a single, atomic, and efficient database operation.
+	update := bson.M{
+		"$set": bson.M{"system_message": message},
+		"$setOnInsert": bson.M{
+			"server_id":        serverId,
+			"activate_channel": "",
+			"server_data":      "",
+			"apilist":          ApiList{Apikeys: []string{}},
+		},
 	}
-	filter := bson.D{{"server_id", serverId}}
-	update := bson.D{{"$set", bson.D{{"system_message", message}}}}
+	opts := options.Update().SetUpsert(true)
 
-	result, err1 := collection.UpdateOne(ctx, filter, update)
-	fmt.Println(result)
-	if err1 != nil {
-		return err1
+	_, err := collection.UpdateOne(ctx, filter, update, opts)
+	if err != nil {
+		return fmt.Errorf("failed to upsert system message: %w", err)
 	}
 	return nil
 }

@@ -1,16 +1,19 @@
+version: '3.8'
+
 services:
   app:
-    build: .
+    image: ethicalgopher/hellishqueen:latest  # Use your pushed image
     container_name: hellish-app
     restart: unless-stopped
     environment:
        MONGO_URL: ${MONGO_URL}
-       BOT_TOKEN : ${BOT_TOKEN}
-       ENCRYPTION_KEY : ${ENCRYPTION_KEY}
+       BOT_TOKEN: ${BOT_TOKEN}
+       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     depends_on:
       - mongo
     networks:
       - hellish-network
+
   mongo:
     image: mongo:4.4
     restart: always
